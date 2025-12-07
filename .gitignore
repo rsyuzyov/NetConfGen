@@ -1,7 +1,17 @@
+# General
+*.log
+*.pem
+*.key
+config.yaml
+notes.txt
+review.md
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
+config_local.py
+secrets.yaml
 
 # Virtual Environment
 venv/
@@ -13,10 +23,7 @@ env/
 .idea/
 .kiro/
 .claude/
+.antigravity/
 
 # Project specific
 output/
-*.log
-config.yaml
-notes.txt
-review.md

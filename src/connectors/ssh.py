@@ -64,6 +64,7 @@ class SSHConnector(BaseConnector):
             client.close()
             
             # Формируем результат с обратной совместимостью
+            # ВАЖНО: НЕ сохраняем key_path для безопасности
             result = {
                 'success': True,
                 'method': 'ssh',
@@ -71,7 +72,6 @@ class SSHConnector(BaseConnector):
                 'os': os_info.get('distribution', os_info.get('os', 'Linux')),
                 'type': 'linux',
                 'user': user,
-                'key_path': key_path,
                 'os_info': os_info
             }
             

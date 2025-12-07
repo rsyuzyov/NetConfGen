@@ -63,7 +63,7 @@ concurrency: 10
 targets:
   - 192.168.1.0/24
 credentials:
-  - user: ag\syuzyov
+  - user: domain\username
     type: winrm
     passwords:
       - password1

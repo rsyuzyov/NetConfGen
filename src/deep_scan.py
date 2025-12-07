@@ -292,7 +292,6 @@ class DeepScanner:
                                     result['auth_attempts'].append({
                                         'method': 'ssh_key',
                                         'user': user,
-                                        'key_path': key_path,
                                         'status': 'failed'
                                     })
             

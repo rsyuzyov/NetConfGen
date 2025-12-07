@@ -1,0 +1,16 @@
+concurrency: 10
+ports_file: ports.json
+credentials:
+  - protocol: winrm
+    accounts:
+      - user: domain\username
+        password: "your_password_here"
+  - protocol: ssh
+    accounts:
+      - user: root
+        password: "your_password_here"
+      - user: admin
+        key_path: "/path/to/ssh/key"
+exclusions: []
+targets:
+  - 192.168.1.0/24

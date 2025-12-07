@@ -228,7 +228,7 @@ if __name__ == "__main__":
         targets = sys.argv[1:]
     else:
         # Default test subnet
-        targets = ["192.168.88.0/24"]
+        targets = ["192.168.0.0/24"]
         
     scanner = NetworkScanner()
     hosts = scanner.scan_all(targets)
