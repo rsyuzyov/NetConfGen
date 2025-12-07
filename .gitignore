@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+env/
+.env
+
+# IDEs
+.vscode/
+.idea/
+.kiro/
+.claude/
+
+# Project specific
+output/
+*.log
+config.yaml
+notes.txt
+review.md

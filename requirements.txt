@@ -1,0 +1,5 @@
+paramiko
+pywinrm[kerberos,credssp]
+pypsexec
+pyyaml
+mac-vendor-lookup
