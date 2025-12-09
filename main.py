@@ -40,14 +40,16 @@ def main():
         ]
     )
     
-    # Убираем INFO логи от библиотек
+    # Убираем шум от сторонних библиотек
     logging.getLogger('pypsexec').setLevel(logging.WARNING)
     logging.getLogger('smbprotocol').setLevel(logging.WARNING)
-    # Переносим INFO сообщения paramiko в DEBUG (показываются только в debug режиме)
     if args.debug:
         logging.getLogger('paramiko').setLevel(logging.DEBUG)
+        logging.getLogger('paramiko.transport').setLevel(logging.DEBUG)
     else:
-        logging.getLogger('paramiko').setLevel(logging.WARNING)
+        # Глушим ошибки Paramiko в обычном режиме, показываем только в debug
+        logging.getLogger('paramiko').setLevel(logging.CRITICAL)
+        logging.getLogger('paramiko.transport').setLevel(logging.CRITICAL)
 
     # Initialize Storage early
     from src.storage import Storage
