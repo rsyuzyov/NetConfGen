@@ -39,27 +39,49 @@ def create_config():
         user = input("Username: ").strip()
         if not user:
             break
-        password = input("Password: ").strip()
-        cred_type = get_input("Type (ssh/winrm)", "ssh").lower()
-        
-        credentials.append({
-            'user': user,
-            'password': password,
-            'type': cred_type
-        })
+        protocol = get_input("Protocol (ssh/winrm)", "ssh").lower()
+        auth_method = "password"
+        key_path = None
+        password = ""
+
+        if protocol == "ssh":
+            auth_method = get_input("SSH auth (password/key)", "password").lower()
+            if auth_method == "key":
+                key_path = get_input("Path to private key")
+            else:
+                password = get_input("Password")
+        else:
+            password = get_input("Password")
+
+        account = {"user": user}
+        if key_path:
+            account["key_path"] = key_path
+        if password:
+            account["password"] = password
+
+        existing_protocol = next((c for c in credentials if c.get("protocol") == protocol), None)
+        if existing_protocol:
+            existing_protocol["accounts"].append(account)
+        else:
+            credentials.append({
+                "protocol": protocol,
+                "accounts": [account]
+            })
+
     config['credentials'] = credentials
 
     # 3. Settings
     print("\n--- Settings ---")
     config['concurrency'] = int(get_input("Deep Scan Concurrency (threads)", "10"))
-    
+    config['ports_file'] = get_input("Ports file name", "ports.json")
+
     exclusions_input = get_input("Exclusions (comma-separated IPs)", "")
     config['exclusions'] = [ip.strip() for ip in exclusions_input.split(',')] if exclusions_input else []
 
     # Save config.yaml
     config_path = 'config.yaml'
     with open(config_path, 'w') as f:
-        yaml.dump(config, f, default_flow_style=False)
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     
     print(f"\nConfiguration saved to {os.path.abspath(config_path)}")
     

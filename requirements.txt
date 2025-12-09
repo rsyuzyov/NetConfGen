@@ -1,5 +1,7 @@
 paramiko
-pywinrm[kerberos,credssp]
+# Kerberos backend: use winkerberos (wheels for 3.13) with pywinrm vendored auth
+pywinrm[credssp]
+winkerberos
 pypsexec
 pyyaml
 mac-vendor-lookup
