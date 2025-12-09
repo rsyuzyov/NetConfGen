@@ -12,7 +12,7 @@ import argparse
 logger = logging.getLogger(__name__)
 
 TIMEOUT = 0.5
-CONCURRENCY_LIMIT = 255
+CONCURRENCY_LIMIT = 1000
 
 def load_port_config(config_path='ports.json'):
     """

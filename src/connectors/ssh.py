@@ -63,7 +63,7 @@ class SSHConnector(BaseConnector):
             
             client.close()
             
-            # Формируем результат с обратной совместимостью
+            # Формируем результат
             # ВАЖНО: НЕ сохраняем key_path для безопасности
             result = {
                 'success': True,
@@ -72,7 +72,8 @@ class SSHConnector(BaseConnector):
                 'os': os_info.get('distribution', os_info.get('os', 'Linux')),
                 'type': 'linux',
                 'user': user,
-                'os_info': os_info
+                'mac': os_info.get('mac', ''),
+                'kernel_version': os_info.get('kernel_version', '')
             }
             
             return result

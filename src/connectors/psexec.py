@@ -26,8 +26,8 @@ class PsExecConnector(BaseConnector):
         service_created = False
         try:
             logger.debug(f"PsExec: Connecting to {ip} as {user} (password length: {len(password) if password else 0})...")
-            c = Client(ip, username=user, password=password)
-            c.connect()
+            c = Client(ip, username=user, password=password, port=445)
+            c.connect(timeout=5)
             
             try:
                 # Создаем сервис один раз; удаляем в finally ниже
@@ -57,12 +57,26 @@ class PsExecConnector(BaseConnector):
                         os_name = line.split('=', 1)[1].strip()
                         break
 
+                # Get kernel version
+                stdout_ver, stderr_ver, rc_ver = c.run_executable(
+                    "cmd.exe",
+                    arguments="/c wmic os get Version /value",
+                )
+                version_output = stdout_ver.decode('utf-8').strip()
+                
+                kernel_version = ""
+                for line in version_output.split('\n'):
+                    if 'version=' in line.lower():
+                        kernel_version = line.split('=', 1)[1].strip()
+                        break
+
                 return {
                     'hostname': hostname,
                     'os': os_name,
                     'type': 'windows',
                     'user': user,
-                    'auth_method': 'psexec'
+                    'auth_method': 'psexec',
+                    'kernel_version': kernel_version
                 }
             finally:
                 if service_created:

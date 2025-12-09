@@ -109,7 +109,7 @@ class WinRMConnector(BaseConnector):
                 logger.debug(f"Failed to collect OS info via WinRM for {ip}: {e}")
                 # Продолжаем без детальной информации
             
-            # Формируем результат с обратной совместимостью
+            # Формируем результат
             result = {
                 'success': True,
                 'method': 'winrm',
@@ -117,7 +117,8 @@ class WinRMConnector(BaseConnector):
                 'os': os_info.get('os', 'Windows'),
                 'type': 'windows',
                 'user': user,
-                'os_info': os_info
+                'mac': os_info.get('mac', ''),
+                'kernel_version': os_info.get('kernel_version', '')
             }
             
             return result
@@ -189,7 +190,7 @@ class WinRMConnector(BaseConnector):
                         logger.debug(f"Failed to collect OS info via WinRM for {ip} (SSO): {e}")
                         # Продолжаем без детальной информации
                     
-                    # Формируем результат с обратной совместимостью
+                    # Формируем результат
                     return {
                         'success': True,
                         'method': 'winrm',
@@ -198,7 +199,8 @@ class WinRMConnector(BaseConnector):
                         'type': 'windows',
                         'user': current_user,
                         'auth_method': 'winrm_sso',
-                        'os_info': os_info
+                        'mac': os_info.get('mac', ''),
+                        'kernel_version': os_info.get('kernel_version', '')
                     }
             except Exception:
                 continue  # Try next transport
