@@ -25,7 +25,7 @@ def load_config(config_path):
 def main():
     parser = argparse.ArgumentParser(description="NetConfGen - Network Scanner")
     parser.add_argument('--config', default='config.yaml', help='Path to config file')
-    parser.add_argument('--step', choices=['discovery', 'port-scan', 'connection-check', 'report', 'all'], default='all', help='Step to run')
+    parser.add_argument('--step', choices=['discovery', 'port-scan', 'connection-check', 'fingerprint', 'report', 'all'], default='all', help='Step to run')
     parser.add_argument('--force', action='store_true', help='Force rescan of all hosts')
     parser.add_argument('--host', help='Scan specific host IP')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
@@ -43,13 +43,6 @@ def main():
     # Убираем шум от сторонних библиотек
     logging.getLogger('pypsexec').setLevel(logging.WARNING)
     logging.getLogger('smbprotocol').setLevel(logging.WARNING)
-    if args.debug:
-        logging.getLogger('paramiko').setLevel(logging.DEBUG)
-        logging.getLogger('paramiko.transport').setLevel(logging.DEBUG)
-    else:
-        # Глушим ошибки Paramiko в обычном режиме, показываем только в debug
-        logging.getLogger('paramiko').setLevel(logging.CRITICAL)
-        logging.getLogger('paramiko.transport').setLevel(logging.CRITICAL)
 
     # Initialize Storage early
     from src.storage import Storage
@@ -152,10 +145,36 @@ def main():
                 connection_checker.check_all_hosts(hosts=None, concurrency=config.get('concurrency', 20), force=args.force)
                 logger.info("Проверка подключения завершена.")
 
-    # 5. Reporting Stage
+    # 5. Fingerprint Stage
+    if args.step in ['fingerprint', 'all']:
+        from src.fingerprint import Fingerprint
+        logger.info("=== Stage 4: Fingerprinting ===")
+        
+        fingerprint = Fingerprint(storage)
+        
+        # If specific host is requested
+        if args.host:
+            ip = args.host
+            # Check if host exists in storage
+            if ip not in storage.data:
+                logger.error(f"Хост {ip} не найден в storage. Запустите сначала discovery для этого хоста.")
+                sys.exit(1)
+            
+            logger.info(f"Fingerprinting хоста: {ip}")
+            fingerprint.run(host_ip=ip, force=args.force)
+        else:
+            # Fingerprint all hosts with deep_scan_status != 'completed'
+            if not storage.data:
+                logger.warning("Нет хостов в storage. Запустите сначала discovery.")
+            else:
+                fingerprint.run(force=args.force)
+        
+        logger.info("Fingerprinting завершен.")
+
+    # 6. Reporting Stage
     if args.step in ['report', 'all']:
         from src.reporting import ReportGenerator
-        logger.info("=== Stage 4 Reporting ===")
+        logger.info("=== Stage 5: Reporting ===")
         reporter = ReportGenerator(storage)
         reporter.generate_all()
 

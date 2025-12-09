@@ -14,8 +14,21 @@ except ImportError:
     HAS_MAC_LOOKUP = False
     logger.debug("mac-vendor-lookup not installed. Vendor detection will be limited.")
 
-class Fingerprinter:
-    def __init__(self):
+class Fingerprint:
+    """
+    Класс для fingerprinting хостов.
+    Определяет ОС и тип устройства через TTL, баннеры и MAC-адрес.
+    Может работать как отдельный шаг для обработки хостов из storage.
+    """
+    
+    def __init__(self, storage=None):
+        """
+        Args:
+            storage: Storage объект (опционально, для работы в режиме шага)
+        """
+        self.storage = storage
+        
+        # Инициализация MAC lookup
         if HAS_MAC_LOOKUP:
             try:
                 self.mac_lookup = MacLookup()
@@ -234,7 +247,7 @@ class Fingerprinter:
 
         return result
 
-    # ===== Main Method =====
+    # ===== Main Fingerprinting Method =====
     def lightweight_fingerprint(self, ip, vendor=None, mac=None):
         """
         Легковесный fingerprinting без nmap.
@@ -320,7 +333,6 @@ class Fingerprinter:
     def fingerprint(self, ip, vendor=None):
         """
         Обратная совместимость со старым API.
-        Вызывается из deep_scan.py:224
         
         Старый формат:
             {'os': str, 'hostname': str, 'type': str}
@@ -334,3 +346,90 @@ class Fingerprinter:
             'hostname': fp_result.get('hostname', ''),
             'type': fp_result['type']
         }
+
+    # ===== Step Mode Methods =====
+    def run(self, host_ip=None, force=False):
+        """
+        Запускает fingerprinting для хостов из storage.
+        
+        Args:
+            host_ip: IP конкретного хоста (опционально)
+            force: Принудительно запустить для всех хостов
+        """
+        if not self.storage:
+            raise ValueError("Storage не инициализирован. Создайте объект с storage для использования run()")
+        
+        if host_ip:
+            # Fingerprint для конкретного хоста
+            self._fingerprint_host(host_ip, force)
+        else:
+            # Fingerprint для всех подходящих хостов
+            self._fingerprint_all_hosts(force)
+    
+    def _fingerprint_host(self, ip, force=False):
+        """Fingerprint для одного хоста."""
+        host_info = self.storage.get_host(ip)
+        
+        if not host_info:
+            logger.error(f"Хост {ip} не найден в storage")
+            return
+        
+        # Проверяем, нужно ли делать fingerprint
+        deep_scan_status = host_info.get('deep_scan_status', '')
+        
+        if not force and deep_scan_status == 'completed':
+            logger.info(f"Хост {ip} уже имеет deep_scan_status=completed, пропускаем")
+            return
+        
+        logger.info(f"Fingerprinting хоста: {ip}")
+        
+        # Выполняем fingerprinting
+        fp_result = self.lightweight_fingerprint(
+            ip,
+            vendor=host_info.get('vendor'),
+            mac=host_info.get('mac')
+        )
+        
+        # Обновляем информацию в storage
+        update_data = {
+            'os': fp_result.get('os', 'Unknown'),
+            'type': fp_result.get('type', 'unknown'),
+            'hostname': fp_result.get('hostname', ''),
+            'fingerprint_method': fp_result.get('method', 'none'),
+            'fingerprint_confidence': fp_result.get('confidence', 'low')
+        }
+        
+        # Добавляем vendor если был определен
+        if 'vendor' in fp_result:
+            update_data['vendor'] = fp_result['vendor']
+        
+        self.storage.update_host(ip, update_data)
+        
+        logger.info(f"  OS: {fp_result.get('os')}, Type: {fp_result.get('type')}, "
+                   f"Method: {fp_result.get('method')}, Confidence: {fp_result.get('confidence')}")
+    
+    def _fingerprint_all_hosts(self, force=False):
+        """Fingerprint для всех хостов с deep_scan_status != 'completed'."""
+        if not self.storage.data:
+            logger.warning("Нет хостов в storage")
+            return
+        
+        # Фильтруем хосты
+        hosts_to_scan = []
+        for ip, host_info in self.storage.data.items():
+            deep_scan_status = host_info.get('deep_scan_status', '')
+            
+            if force or deep_scan_status != 'completed':
+                hosts_to_scan.append(ip)
+        
+        if not hosts_to_scan:
+            logger.info("Нет хостов для fingerprinting (все имеют deep_scan_status=completed)")
+            return
+        
+        logger.info(f"Найдено хостов для fingerprinting: {len(hosts_to_scan)}")
+        
+        # Выполняем fingerprinting для каждого хоста
+        for ip in hosts_to_scan:
+            self._fingerprint_host(ip, force=True)  # force=True т.к. уже отфильтровали
+        
+        logger.info(f"Fingerprinting завершен для {len(hosts_to_scan)} хостов")

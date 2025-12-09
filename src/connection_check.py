@@ -1,10 +1,6 @@
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .connectors.ssh import SSHConnector
-from .connectors.winrm import WinRMConnector
-from .connectors.psexec import PsExecConnector
-from .fingerprinting import Fingerprinter
 from .credentials import CredentialManager
 
 logger = logging.getLogger(__name__)
@@ -14,13 +10,33 @@ class ConnectionChecker:
         self.storage = storage
         
         # Helper modules
-        self.fingerprinter = Fingerprinter()
         self.credential_manager = CredentialManager(credentials)
         
-        # Connectors
-        self.ssh_connector = SSHConnector()
-        self.winrm_connector = WinRMConnector()
-        self.psexec_connector = PsExecConnector()
+        # Connectors - отложенная инициализация
+        self._ssh_connector = None
+        self._winrm_connector = None
+        self._psexec_connector = None
+    
+    @property
+    def ssh_connector(self):
+        if self._ssh_connector is None:
+            from .connectors.ssh import SSHConnector
+            self._ssh_connector = SSHConnector()
+        return self._ssh_connector
+    
+    @property
+    def winrm_connector(self):
+        if self._winrm_connector is None:
+            from .connectors.winrm import WinRMConnector
+            self._winrm_connector = WinRMConnector()
+        return self._winrm_connector
+    
+    @property
+    def psexec_connector(self):
+        if self._psexec_connector is None:
+            from .connectors.psexec import PsExecConnector
+            self._psexec_connector = PsExecConnector()
+        return self._psexec_connector
     
     def _has_required_ports(self, host_info):
         """
@@ -144,18 +160,6 @@ class ConnectionChecker:
                         
                         result.update(info)
                         
-                        # Пытаемся получить vendor из MAC
-                        mac_for_vendor = None
-                        if info.get('os_info', {}).get('mac'):
-                            mac_for_vendor = info['os_info']['mac']
-                        elif result.get('mac'):
-                            mac_for_vendor = result.get('mac')
-                        
-                        if not result.get('vendor') and mac_for_vendor:
-                            vendor = self.fingerprinter.get_vendor_from_mac(mac_for_vendor)
-                            if vendor:
-                                result['vendor'] = vendor
-                        
                         result['deep_scan_status'] = 'completed'
                         result['auth_method'] = 'winrm_sso'
                         logger.info(f"{ip}: Успешное подключение через winrm_sso")
@@ -201,17 +205,6 @@ class ConnectionChecker:
                                 
                                 result.update(info)
                                 
-                                mac_for_vendor = None
-                                if info.get('os_info', {}).get('mac'):
-                                    mac_for_vendor = info['os_info']['mac']
-                                elif result.get('mac'):
-                                    mac_for_vendor = result.get('mac')
-                                
-                                if not result.get('vendor') and mac_for_vendor:
-                                    vendor = self.fingerprinter.get_vendor_from_mac(mac_for_vendor)
-                                    if vendor:
-                                        result['vendor'] = vendor
-                                
                                 result['deep_scan_status'] = 'completed'
                                 result['auth_method'] = 'ssh_key'
                                 result['user'] = user
@@ -250,17 +243,6 @@ class ConnectionChecker:
                                     result['vendor'] = existing_vendor
                                 
                                 result.update(info)
-                                
-                                mac_for_vendor = None
-                                if info.get('os_info', {}).get('mac'):
-                                    mac_for_vendor = info['os_info']['mac']
-                                elif result.get('mac'):
-                                    mac_for_vendor = result.get('mac')
-                                
-                                if not result.get('vendor') and mac_for_vendor:
-                                    vendor = self.fingerprinter.get_vendor_from_mac(mac_for_vendor)
-                                    if vendor:
-                                        result['vendor'] = vendor
                                 
                                 result['deep_scan_status'] = 'completed'
                                 result['auth_method'] = 'ssh'
@@ -304,17 +286,6 @@ class ConnectionChecker:
                                         result['vendor'] = existing_vendor
                                     
                                     result.update(info)
-                                    
-                                    mac_for_vendor = None
-                                    if info.get('os_info', {}).get('mac'):
-                                        mac_for_vendor = info['os_info']['mac']
-                                    elif result.get('mac'):
-                                        mac_for_vendor = result.get('mac')
-                                    
-                                    if not result.get('vendor') and mac_for_vendor:
-                                        vendor = self.fingerprinter.get_vendor_from_mac(mac_for_vendor)
-                                        if vendor:
-                                            result['vendor'] = vendor
                                     
                                     result['deep_scan_status'] = 'completed'
                                     result['auth_method'] = 'winrm'
@@ -369,12 +340,6 @@ class ConnectionChecker:
                                     
                                     result.update(info)
                                     
-                                    # PsExec не возвращает MAC, используем из result
-                                    if not result.get('vendor') and result.get('mac'):
-                                        vendor = self.fingerprinter.get_vendor_from_mac(result.get('mac'))
-                                        if vendor:
-                                            result['vendor'] = vendor
-                                    
                                     result['deep_scan_status'] = 'completed'
                                     result['auth_method'] = 'psexec'
                                     result['user'] = user
@@ -398,14 +363,8 @@ class ConnectionChecker:
                                     'error': str(e)
                                 })
         
-        # Если аутентификация не удалась, пробуем fingerprinting
+        # Если аутентификация не удалась
         if result['deep_scan_status'] != 'completed':
-            fingerprint = self.fingerprinter.lightweight_fingerprint(
-                ip,
-                vendor=host_info.get('vendor'),
-                mac=host_info.get('mac')
-            )
-            result.update(fingerprint)
             result['deep_scan_status'] = 'scanned_no_access'
         
         self.storage.update_host(ip, result)
