@@ -127,7 +127,7 @@ class ConnectionChecker:
         
         # WinRM - если порт 5985 открыт
         if 5985 in open_ports:
-            auth_methods_to_try.extend(['winrm_sso', 'winrm'])
+            auth_methods_to_try.append('winrm')
         
         # PSExec - если порт 445 открыт
         if 445 in open_ports:
@@ -140,54 +140,7 @@ class ConnectionChecker:
         connection_successful = False
         
         for connector_type in auth_methods_to_try:
-            if connector_type == 'winrm_sso':
-                # WinRM SSO
-                try:
-                    logger.debug(f"Пробуем WinRM SSO для {ip}...")
-                    info = self.winrm_connector.connect(ip, user=None, password=None)
-                    
-                    if info and info.get('auth_failed'):
-                        # Протокол работает, но аутентификация не прошла
-                        logger.info(f"{ip}: WinRM SSO - протокол работает, но аутентификация не прошла")
-                        result['auth_methods'].append('winrm_sso')
-                        result['auth_attempts'].append({
-                            'method': 'winrm_sso',
-                            'status': 'auth_failed',
-                            'error': info.get('error', 'Authentication failed')
-                        })
-                    elif info:
-                        # Успешное подключение
-                        existing_host = self.storage.get_host(ip)
-                        existing_vendor = existing_host.get('vendor', '')
-                        if existing_vendor and not result.get('vendor'):
-                            result['vendor'] = existing_vendor
-                        
-                        result.update(info)
-                        result['auth_methods'].append('winrm_sso')
-                        result['deep_scan_status'] = 'completed'
-                        connection_successful = True
-                        logger.info(f"{ip}: Успешное подключение через winrm_sso")
-                        result['auth_attempts'].append({
-                            'method': 'winrm_sso',
-                            'status': 'success'
-                        })
-                        # Продолжаем проверять другие протоколы
-                    else:
-                        logger.debug(f"WinRM SSO вернул None для {ip}")
-                        result['auth_attempts'].append({
-                            'method': 'winrm_sso',
-                            'status': 'failed',
-                            'error': 'Connection failed'
-                        })
-                except Exception as e:
-                    logger.debug(f"Ошибка WinRM SSO для {ip}: {e}")
-                    result['auth_attempts'].append({
-                        'method': 'winrm_sso',
-                        'status': 'error',
-                        'error': str(e)
-                    })
-            
-            elif connector_type == 'ssh_key':
+            if connector_type == 'ssh_key':
                 # SSH с ключами
                 for cred in self.credential_manager:
                     if cred.get('type') == 'ssh':
@@ -292,7 +245,58 @@ class ConnectionChecker:
                                 })
             
             elif connector_type == 'winrm':
-                # WinRM с учетными данными
+                # Сначала пробуем SSO
+                try:
+                    logger.debug(f"Пробуем WinRM SSO для {ip}...")
+                    info = self.winrm_connector.connect(ip, user=None, password=None)
+                    
+                    if info and info.get('auth_failed'):
+                        # Протокол работает, но аутентификация не прошла
+                        logger.info(f"{ip}: WinRM SSO - протокол работает, но аутентификация не прошла")
+                        if 'winrm' not in result['auth_methods']:
+                            result['auth_methods'].append('winrm')
+                        result['auth_attempts'].append({
+                            'method': 'winrm',
+                            'user': info.get('user', ''),
+                            'status': 'auth_failed',
+                            'error': info.get('error', 'Authentication failed')
+                        })
+                    elif info:
+                        # Успешное подключение через SSO
+                        existing_host = self.storage.get_host(ip)
+                        existing_vendor = existing_host.get('vendor', '')
+                        if existing_vendor and not result.get('vendor'):
+                            result['vendor'] = existing_vendor
+                        
+                        result.update(info)
+                        if 'winrm' not in result['auth_methods']:
+                            result['auth_methods'].append('winrm')
+                        result['deep_scan_status'] = 'completed'
+                        connection_successful = True
+                        sso_user = info.get('user', '')
+                        logger.info(f"{ip}: Успешное подключение через winrm (SSO) user={sso_user}")
+                        result['auth_attempts'].append({
+                            'method': 'winrm',
+                            'user': sso_user,
+                            'status': 'success'
+                        })
+                        # Продолжаем проверять другие протоколы
+                    else:
+                        logger.debug(f"WinRM SSO вернул None для {ip}")
+                        result['auth_attempts'].append({
+                            'method': 'winrm',
+                            'status': 'failed',
+                            'error': 'Connection failed'
+                        })
+                except Exception as e:
+                    logger.debug(f"Ошибка WinRM SSO для {ip}: {e}")
+                    result['auth_attempts'].append({
+                        'method': 'winrm',
+                        'status': 'error',
+                        'error': str(e)
+                    })
+                
+                # Затем пробуем с учетными данными
                 for cred in self.credential_manager:
                     if cred.get('type') == 'winrm':
                         user = cred.get('user')

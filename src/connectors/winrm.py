@@ -67,10 +67,9 @@ class WinRMConnector(BaseConnector):
             log_prefix = 'AUTH'
         else:
             # SSO аутентификация
-            current_user = os.environ.get('USERNAME', getpass.getuser())
-            user = current_user
             auth_mode = 'sso'
             log_prefix = 'SSO'
+            user = os.environ.get('USERNAME', getpass.getuser())
             
             # Определяем транспорты для SSO
             if sys.platform == 'win32':
@@ -105,7 +104,6 @@ class WinRMConnector(BaseConnector):
                             'os_type': 'windows',
                             'type': 'workstation',
                             'user': user,
-                            'auth_method': 'winrm_sso',
                             'mac': os_info.get('mac', ''),
                             'kernel_version': os_info.get('kernel_version', '')
                         }
