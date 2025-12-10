@@ -78,5 +78,10 @@ class SSHConnector(BaseConnector):
             }
             
             return result
-        except:
+        except paramiko.AuthenticationException as e:
+            # Ошибка аутентификации - протокол работает, но учетные данные неверные
+            logger.debug(f"SSH authentication failed for {ip}: {e}")
+            return {'auth_failed': True, 'error': 'Authentication failed'}
+        except Exception as e:
+            logger.debug(f"SSH connection failed for {ip}: {e}")
             return None

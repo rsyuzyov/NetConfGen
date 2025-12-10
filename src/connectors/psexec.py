@@ -94,11 +94,16 @@ class PsExecConnector(BaseConnector):
                         logger.debug(f"PsExec: disconnect error for {ip}: {disconnect_err}")
         except (SMBAuthenticationError, LogonFailure) as e:
             logger.debug(f"PsExec: Authentication failed for {user}@{ip}: {type(e).__name__} - {e}")
-            return None
+            return {'auth_failed': True, 'error': 'Authentication failed'}
         except SMBConnectionClosed as e:
             logger.debug(f"PsExec: SMB connection closed for {ip}: {e}")
             return None
         except Exception as e:
+            error_str = str(e).lower()
+            # Проверяем, является ли это ошибкой аутентификации
+            if any(keyword in error_str for keyword in ['authentication', 'credentials', 'logon', 'access denied', 'permission denied']):
+                logger.debug(f"PsExec: Authentication error for {user}@{ip}: {e}")
+                return {'auth_failed': True, 'error': 'Authentication failed'}
             logger.warning(f"PsExec: Connection failed to {ip} with user {user}: {type(e).__name__} - {e}")
             import traceback
             logger.debug(f"PsExec traceback: {traceback.format_exc()}")

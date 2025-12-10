@@ -133,10 +133,17 @@ class WinRMConnector(BaseConnector):
                 logger.debug(f"[{ip}] AUTH: WinRM OS info collected: {os_info}")
                 
             except Exception as e:
-                logger.debug(f"[{ip}] AUTH: Failed to collect OS info via WinRM: {e}", exc_info=True)
-                # Продолжаем без детальной информации
+                logger.debug(f"[{ip}] AUTH: Failed to collect OS info via WinRM: {e}")
+                # Если не удалось выполнить команды, подключение неудачное
+                return {'error': f'Failed to execute commands: {str(e)}'}
+            
+            # Проверяем что удалось получить хотя бы hostname
+            if not os_info.get('hostname'):
+                logger.debug(f"[{ip}] AUTH: Connected but failed to get hostname, authentication likely failed")
+                return {'error': 'Connected but failed to get hostname'}
             
             # Формируем результат
+            logger.info(f"[{ip}] AUTH: Successfully authenticated with user {user}")
             result = {
                 'success': True,
                 'method': 'winrm',
@@ -150,9 +157,14 @@ class WinRMConnector(BaseConnector):
             }
             
             return result
-        except:
-            return None
-        return None
+        except Exception as e:
+            error_str = str(e).lower()
+            # Проверяем, является ли это ошибкой аутентификации
+            if any(keyword in error_str for keyword in ['401', 'unauthorized', 'authentication', 'credentials', 'logon failure']):
+                logger.debug(f"WinRM authentication failed for {ip}: {e}")
+                return {'auth_failed': True, 'error': f'Authentication failed: {str(e)}'}
+            logger.debug(f"WinRM connection failed for {ip}: {e}")
+            return {'error': f'Connection error: {str(e)}'}
 
     def _connect_sso(self, ip):
         self._ensure_gssapi_auth()
@@ -242,10 +254,21 @@ class WinRMConnector(BaseConnector):
                         logger.debug(f"[{ip}] SSO: WinRM OS info collected: {os_info}")
                         
                     except Exception as e:
-                        logger.debug(f"[{ip}] SSO: Failed to collect OS info via WinRM: {e}", exc_info=True)
-                        # Продолжаем без детальной информации
+                        logger.debug(f"[{ip}] SSO: Failed to collect OS info via WinRM with transport {transport}: {e}")
+                        # Если не удалось выполнить команды, пробуем следующий transport
+                        if transport == transports_to_try[-1]:
+                            return {'error': f'Failed to execute commands with all transports. Last error: {str(e)}'}
+                        continue
+                    
+                    # Проверяем что удалось получить хотя бы hostname
+                    if not os_info.get('hostname'):
+                        logger.debug(f"[{ip}] SSO: Transport {transport} connected but failed to get hostname, trying next transport")
+                        if transport == transports_to_try[-1]:
+                            return {'error': 'Connected but failed to get hostname with all transports'}
+                        continue
                     
                     # Формируем результат
+                    logger.info(f"[{ip}] SSO: Successfully connected with transport {transport}")
                     return {
                         'success': True,
                         'method': 'winrm',
@@ -258,7 +281,17 @@ class WinRMConnector(BaseConnector):
                         'mac': os_info.get('mac', ''),
                         'kernel_version': os_info.get('kernel_version', '')
                     }
-            except Exception:
+            except Exception as e:
+                error_str = str(e).lower()
+                # Проверяем, является ли это ошибкой аутентификации
+                if any(keyword in error_str for keyword in ['401', 'unauthorized', 'authentication', 'credentials', 'logon failure']):
+                    logger.debug(f"WinRM SSO authentication failed for {ip} with transport {transport}: {e}")
+                    # Возвращаем auth_failed только если все транспорты провалились с auth error
+                    if transport == transports_to_try[-1]:
+                        return {'auth_failed': True, 'error': f'Authentication failed: {str(e)}'}
+                # Если это последний транспорт, возвращаем ошибку
+                if transport == transports_to_try[-1]:
+                    return {'error': f'Connection error with all transports. Last error: {str(e)}'}
                 continue  # Try next transport
         
-        return None
+        return {'error': 'All transports failed without specific error'}

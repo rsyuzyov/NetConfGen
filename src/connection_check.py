@@ -98,22 +98,16 @@ class ConnectionChecker:
             'os_type': 'linux',
             'type': 'unknown',
             'deep_scan_status': 'failed',
-            'auth_method': None,
-            'auth_attempts': []
+            'auth_methods': [],  # Список всех рабочих протоколов
+            'auth_attempts': []  # Обязательное поле для всех попыток
         }
         
         open_ports = host_info.get('open_ports', [])
         
-        # Определяем тип хоста по открытым портам
-        is_windows = 445 in open_ports or 5985 in open_ports or 3389 in open_ports
-        is_linux = 22 in open_ports
+        # Определяем тип хоста по открытым портам (для информации)
         is_mikrotik = 8291 in open_ports or 8728 in open_ports
         
-        # Также проверяем сохраненный тип ОС
-        if not is_windows and host_info.get('os_type') == 'windows':
-            is_windows = True
-        
-        logger.debug(f"{ip}: Windows={is_windows}, Linux={is_linux}, MikroTik={is_mikrotik}")
+        logger.debug(f"{ip}: Open ports: {open_ports}")
         
         # Если обнаружен MikroTik
         if is_mikrotik:
@@ -123,58 +117,67 @@ class ConnectionChecker:
             result['device_type'] = 'mikrotik'
             logger.debug(f"{ip}: Определен как MikroTik")
         
-        # Приоритизация коннекторов
-        auth_attempts = []
+        # Формируем список методов для проверки на основе открытых портов
+        # ВАЖНО: проверяем все протоколы, если порт открыт, независимо от типа ОС
+        auth_methods_to_try = []
         
-        # Если есть SSH порт - всегда пробуем SSH первым (быстрее и надежнее)
-        if is_linux:
-            auth_attempts.extend(['ssh_key', 'ssh'])
+        # SSH - если порт 22 открыт
+        if 22 in open_ports:
+            auth_methods_to_try.extend(['ssh_key', 'ssh'])
         
-        # Если есть признаки Windows - добавляем Windows методы
-        if is_windows:
-            auth_attempts.extend(['winrm_sso', 'winrm', 'psexec'])
+        # WinRM - если порт 5985 открыт
+        if 5985 in open_ports:
+            auth_methods_to_try.extend(['winrm_sso', 'winrm'])
         
-        # Если ничего не определено, но есть SSH порт - пробуем SSH
-        if not auth_attempts and 22 in open_ports:
-            auth_attempts.extend(['ssh'])
+        # PSExec - если порт 445 открыт
+        if 445 in open_ports:
+            auth_methods_to_try.append('psexec')
+        
+        logger.debug(f"{ip}: Methods to try based on open ports: {auth_methods_to_try}")
 
-        # Перебор коннекторов с приоритизацией
-        for connector_type in auth_attempts:
+        # Перебор коннекторов
+        # Флаг успешного подключения (для получения hostname и других данных)
+        connection_successful = False
+        
+        for connector_type in auth_methods_to_try:
             if connector_type == 'winrm_sso':
-                # WinRM SSO (только для Windows)
-                if not is_windows:
-                    logger.debug(f"{ip}: Пропускаем WinRM SSO - не Windows хост")
-                    continue
-                if 5985 not in open_ports:
-                    result['auth_attempts'].append({
-                        'method': 'winrm_sso',
-                        'status': 'skipped',
-                        'error': 'Порт 5985 закрыт'
-                    })
-                    continue
-                
+                # WinRM SSO
                 try:
                     logger.debug(f"Пробуем WinRM SSO для {ip}...")
                     info = self.winrm_connector.connect(ip, user=None, password=None)
-                    if info:
+                    
+                    if info and info.get('auth_failed'):
+                        # Протокол работает, но аутентификация не прошла
+                        logger.info(f"{ip}: WinRM SSO - протокол работает, но аутентификация не прошла")
+                        result['auth_methods'].append('winrm_sso')
+                        result['auth_attempts'].append({
+                            'method': 'winrm_sso',
+                            'status': 'auth_failed',
+                            'error': info.get('error', 'Authentication failed')
+                        })
+                    elif info:
+                        # Успешное подключение
                         existing_host = self.storage.get_host(ip)
                         existing_vendor = existing_host.get('vendor', '')
                         if existing_vendor and not result.get('vendor'):
                             result['vendor'] = existing_vendor
                         
                         result.update(info)
-                        
+                        result['auth_methods'].append('winrm_sso')
                         result['deep_scan_status'] = 'completed'
-                        result['auth_method'] = 'winrm_sso'
+                        connection_successful = True
                         logger.info(f"{ip}: Успешное подключение через winrm_sso")
-                        result['auth_attempts'] = []
-                        self.storage.update_host(ip, result)
-                        return result
+                        result['auth_attempts'].append({
+                            'method': 'winrm_sso',
+                            'status': 'success'
+                        })
+                        # Продолжаем проверять другие протоколы
                     else:
                         logger.debug(f"WinRM SSO вернул None для {ip}")
                         result['auth_attempts'].append({
                             'method': 'winrm_sso',
-                            'status': 'failed'
+                            'status': 'failed',
+                            'error': 'Connection failed'
                         })
                 except Exception as e:
                     logger.debug(f"Ошибка WinRM SSO для {ip}: {e}")
@@ -186,14 +189,6 @@ class ConnectionChecker:
             
             elif connector_type == 'ssh_key':
                 # SSH с ключами
-                if 22 not in open_ports:
-                    result['auth_attempts'].append({
-                        'method': 'ssh_key',
-                        'status': 'skipped',
-                        'error': 'Порт 22 закрыт'
-                    })
-                    continue
-                
                 for cred in self.credential_manager:
                     if cred.get('type') == 'ssh':
                         user = cred.get('user')
@@ -201,38 +196,51 @@ class ConnectionChecker:
                         
                         for key_path in key_paths:
                             info = self.ssh_connector.connect(ip, user, key_path=key_path)
-                            if info:
+                            
+                            if info and info.get('auth_failed'):
+                                # Протокол работает, но аутентификация не прошла
+                                logger.info(f"{ip}: SSH (key) - протокол работает, но аутентификация не прошла для {user}")
+                                if 'ssh' not in result['auth_methods']:
+                                    result['auth_methods'].append('ssh')
+                                result['auth_attempts'].append({
+                                    'method': 'ssh_key',
+                                    'user': user,
+                                    'status': 'auth_failed',
+                                    'error': info.get('error', 'Authentication failed')
+                                })
+                            elif info:
+                                # Успешное подключение
                                 existing_host = self.storage.get_host(ip)
                                 existing_vendor = existing_host.get('vendor', '')
                                 if existing_vendor and not result.get('vendor'):
                                     result['vendor'] = existing_vendor
                                 
-                                result.update(info)
+                                # Обновляем данные только если еще не было успешного подключения
+                                if not connection_successful:
+                                    result.update(info)
+                                    result['deep_scan_status'] = 'completed'
+                                    connection_successful = True
                                 
-                                result['deep_scan_status'] = 'completed'
-                                result['auth_method'] = 'ssh_key'
+                                if 'ssh' not in result['auth_methods']:
+                                    result['auth_methods'].append('ssh')
                                 result['user'] = user
                                 logger.info(f"{ip}: Успешное подключение через ssh_key")
-                                result['auth_attempts'] = []
-                                self.storage.update_host(ip, result)
-                                return result
+                                result['auth_attempts'].append({
+                                    'method': 'ssh_key',
+                                    'user': user,
+                                    'status': 'success'
+                                })
+                                # Продолжаем проверять другие протоколы
                             else:
                                 result['auth_attempts'].append({
                                     'method': 'ssh_key',
                                     'user': user,
-                                    'status': 'failed'
+                                    'status': 'failed',
+                                    'error': 'Connection failed'
                                 })
 
             elif connector_type == 'ssh':
                 # SSH с паролями
-                if 22 not in open_ports:
-                    result['auth_attempts'].append({
-                        'method': 'ssh',
-                        'status': 'skipped',
-                        'error': 'Порт 22 закрыт'
-                    })
-                    continue
-                
                 for cred in self.credential_manager:
                     if cred.get('type') == 'ssh':
                         user = cred.get('user')
@@ -240,41 +248,51 @@ class ConnectionChecker:
                         
                         for password in passwords:
                             info = self.ssh_connector.connect(ip, user, password=password)
-                            if info:
+                            
+                            if info and info.get('auth_failed'):
+                                # Протокол работает, но аутентификация не прошла
+                                logger.info(f"{ip}: SSH (password) - протокол работает, но аутентификация не прошла для {user}")
+                                if 'ssh' not in result['auth_methods']:
+                                    result['auth_methods'].append('ssh')
+                                result['auth_attempts'].append({
+                                    'method': 'ssh',
+                                    'user': user,
+                                    'status': 'auth_failed',
+                                    'error': info.get('error', 'Authentication failed')
+                                })
+                            elif info:
+                                # Успешное подключение
                                 existing_host = self.storage.get_host(ip)
                                 existing_vendor = existing_host.get('vendor', '')
                                 if existing_vendor and not result.get('vendor'):
                                     result['vendor'] = existing_vendor
                                 
-                                result.update(info)
+                                # Обновляем данные только если еще не было успешного подключения
+                                if not connection_successful:
+                                    result.update(info)
+                                    result['deep_scan_status'] = 'completed'
+                                    connection_successful = True
                                 
-                                result['deep_scan_status'] = 'completed'
-                                result['auth_method'] = 'ssh'
+                                if 'ssh' not in result['auth_methods']:
+                                    result['auth_methods'].append('ssh')
                                 result['user'] = user
                                 logger.info(f"{ip}: Успешное подключение через ssh")
-                                result['auth_attempts'] = []
-                                self.storage.update_host(ip, result)
-                                return result
+                                result['auth_attempts'].append({
+                                    'method': 'ssh',
+                                    'user': user,
+                                    'status': 'success'
+                                })
+                                # Продолжаем проверять другие протоколы
                             else:
                                 result['auth_attempts'].append({
                                     'method': 'ssh',
                                     'user': user,
-                                    'status': 'failed'
+                                    'status': 'failed',
+                                    'error': 'Connection failed'
                                 })
             
             elif connector_type == 'winrm':
-                # WinRM с учетными данными (только для Windows)
-                if not is_windows:
-                    logger.debug(f"{ip}: Пропускаем WinRM - не Windows хост")
-                    continue
-                if 5985 not in open_ports:
-                    result['auth_attempts'].append({
-                        'method': 'winrm',
-                        'status': 'skipped',
-                        'error': 'Порт 5985 закрыт'
-                    })
-                    continue
-                
+                # WinRM с учетными данными
                 for cred in self.credential_manager:
                     if cred.get('type') == 'winrm':
                         user = cred.get('user')
@@ -283,26 +301,47 @@ class ConnectionChecker:
                         for password in passwords:
                             try:
                                 info = self.winrm_connector.connect(ip, user, password=password)
-                                if info:
+                                
+                                if info and info.get('auth_failed'):
+                                    # Протокол работает, но аутентификация не прошла
+                                    logger.info(f"{ip}: WinRM - протокол работает, но аутентификация не прошла для {user}")
+                                    if 'winrm' not in result['auth_methods']:
+                                        result['auth_methods'].append('winrm')
+                                    result['auth_attempts'].append({
+                                        'method': 'winrm',
+                                        'user': user,
+                                        'status': 'auth_failed',
+                                        'error': info.get('error', 'Authentication failed')
+                                    })
+                                elif info:
+                                    # Успешное подключение
                                     existing_host = self.storage.get_host(ip)
                                     existing_vendor = existing_host.get('vendor', '')
                                     if existing_vendor and not result.get('vendor'):
                                         result['vendor'] = existing_vendor
                                     
-                                    result.update(info)
+                                    # Обновляем данные только если еще не было успешного подключения
+                                    if not connection_successful:
+                                        result.update(info)
+                                        result['deep_scan_status'] = 'completed'
+                                        connection_successful = True
                                     
-                                    result['deep_scan_status'] = 'completed'
-                                    result['auth_method'] = 'winrm'
+                                    if 'winrm' not in result['auth_methods']:
+                                        result['auth_methods'].append('winrm')
                                     result['user'] = user
                                     logger.info(f"{ip}: Успешное подключение через winrm")
-                                    result['auth_attempts'] = []
-                                    self.storage.update_host(ip, result)
-                                    return result
+                                    result['auth_attempts'].append({
+                                        'method': 'winrm',
+                                        'user': user,
+                                        'status': 'success'
+                                    })
+                                    # Продолжаем проверять другие протоколы
                                 else:
                                     result['auth_attempts'].append({
                                         'method': 'winrm',
                                         'user': user,
-                                        'status': 'failed'
+                                        'status': 'failed',
+                                        'error': 'Connection failed'
                                     })
                             except Exception as e:
                                 result['auth_attempts'].append({
@@ -313,18 +352,7 @@ class ConnectionChecker:
                                 })
 
             elif connector_type == 'psexec':
-                # PsExec (только для Windows)
-                if not is_windows:
-                    logger.debug(f"{ip}: Пропускаем PSExec - не Windows хост")
-                    continue
-                if 445 not in open_ports:
-                    result['auth_attempts'].append({
-                        'method': 'psexec',
-                        'status': 'skipped',
-                        'error': 'Порт 445 закрыт'
-                    })
-                    continue
-                
+                # PsExec
                 for cred in self.credential_manager:
                     if cred.get('type') == 'winrm':  # Используем WinRM credentials для PsExec
                         user = cred.get('user')
@@ -336,27 +364,48 @@ class ConnectionChecker:
                             try:
                                 logger.debug(f"Пробуем PsExec с {user} для {ip} (password length: {len(password)})...")
                                 info = self.psexec_connector.connect(ip, user, password)
-                                if info:
+                                
+                                if info and info.get('auth_failed'):
+                                    # Протокол работает, но аутентификация не прошла
+                                    logger.info(f"{ip}: PSExec - протокол работает, но аутентификация не прошла для {user}")
+                                    if 'psexec' not in result['auth_methods']:
+                                        result['auth_methods'].append('psexec')
+                                    result['auth_attempts'].append({
+                                        'method': 'psexec',
+                                        'user': user,
+                                        'status': 'auth_failed',
+                                        'error': info.get('error', 'Authentication failed')
+                                    })
+                                elif info:
+                                    # Успешное подключение
                                     existing_host = self.storage.get_host(ip)
                                     existing_vendor = existing_host.get('vendor', '')
                                     if existing_vendor and not result.get('vendor'):
                                         result['vendor'] = existing_vendor
                                     
-                                    result.update(info)
+                                    # Обновляем данные только если еще не было успешного подключения
+                                    if not connection_successful:
+                                        result.update(info)
+                                        result['deep_scan_status'] = 'completed'
+                                        connection_successful = True
                                     
-                                    result['deep_scan_status'] = 'completed'
-                                    result['auth_method'] = 'psexec'
+                                    if 'psexec' not in result['auth_methods']:
+                                        result['auth_methods'].append('psexec')
                                     result['user'] = user
                                     logger.info(f"{ip}: Успешное подключение через psexec")
-                                    result['auth_attempts'] = []
-                                    self.storage.update_host(ip, result)
-                                    return result
+                                    result['auth_attempts'].append({
+                                        'method': 'psexec',
+                                        'user': user,
+                                        'status': 'success'
+                                    })
+                                    # Продолжаем проверять другие протоколы
                                 else:
                                     logger.debug(f"PsExec с {user} вернул None для {ip}")
                                     result['auth_attempts'].append({
                                         'method': 'psexec',
                                         'user': user,
                                         'status': 'failed',
+                                        'error': 'Connection failed'
                                     })
                             except Exception as e:
                                 logger.debug(f"Ошибка PsExec для {ip} с {user}: {e}")
@@ -367,11 +416,20 @@ class ConnectionChecker:
                                     'error': str(e)
                                 })
         
-        # Если аутентификация не удалась
-        if result['deep_scan_status'] != 'completed':
+        # Определяем финальный статус
+        if connection_successful:
+            result['deep_scan_status'] = 'completed'
+        elif result['auth_methods']:
+            # Есть рабочие протоколы, но подключиться не удалось
+            result['deep_scan_status'] = 'auth_available_no_access'
+        else:
+            # Ни один протокол не ответил корректно
             result['deep_scan_status'] = 'scanned_no_access'
         
         self.storage.update_host(ip, result)
+        logger.info(f"{ip}: Проверка завершена. Статус: {result['deep_scan_status']}, "
+                   f"Рабочие протоколы: {result['auth_methods']}, "
+                   f"Попыток подключения: {len(result['auth_attempts'])}")
         return result
     
     def check_all_hosts(self, hosts=None, concurrency=20, force=False):
