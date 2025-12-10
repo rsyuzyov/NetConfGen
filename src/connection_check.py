@@ -124,14 +124,16 @@ class ConnectionChecker:
         # Приоритизация коннекторов
         auth_attempts = []
         
-        if is_windows:
-            # Windows хост - пробуем WinRM SSO первым (самый быстрый)
-            auth_attempts.extend(['winrm_sso', 'winrm', 'psexec'])
-        elif is_linux:
-            # Linux хост - пробуем SSH ключи первыми
+        # Если есть SSH порт - всегда пробуем SSH первым (быстрее и надежнее)
+        if is_linux:
             auth_attempts.extend(['ssh_key', 'ssh'])
-        else:
-            # Неизвестный тип - только SSH
+        
+        # Если есть признаки Windows - добавляем Windows методы
+        if is_windows:
+            auth_attempts.extend(['winrm_sso', 'winrm', 'psexec'])
+        
+        # Если ничего не определено, но есть SSH порт - пробуем SSH
+        if not auth_attempts and 22 in open_ports:
             auth_attempts.extend(['ssh'])
 
         # Перебор коннекторов с приоритизацией
