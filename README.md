@@ -5,68 +5,48 @@
 - ansible inventory
 - ssh_config
 - файл hosts.txt
-- детальные отчеты в формате html, csv, json
+- детальные отчеты в формате [html](https://htmlpreview.github.io/?https://github.com/rsyuzyov/net-conf-gen/blob/main/docs/scan_report_example.html), csv, json
 
 ## Установка
 
-    ```bash
-    chmod +x ./install.sh
-    ./install.sh
-    ```
-    или
-    ```batch
-    ./install.bat
-    ```
+Установка зависимостей на linux:
+```bash
+chmod +x ./install.sh && ./install.sh
+```
+Установка python (если не установлен) и зависимостей на windows:
+```batch
+./install.bat
+```
 
 ## Использование
 
 ```bash
 python main.py
 ```
-После окончания работы берем данные в подходящем формате в ./output
+При первом запуске скрипт предложит сгенерировать конфиг (./config.yaml) - отвечаем на вопросы. Для прекращения ввод списка просто нажимаем Enter.  
+Можно заранее создать руками копированием из [config.yaml.example](./config.yaml.example)  
+Далее создаст ./output/scan_state.json - главный файл, дополняемый на каждом этапе работы  
+После окончания работы берем данные в подходящем формате в ./output  
+Пример отчета в формате [html](https://htmlpreview.github.io/?https://github.com/rsyuzyov/net-conf-gen/blob/main/docs/scan_report_example.html)  
 
-Пример отчета в формате [html](docs/scan_report_example.html)
-
-Запуск отдельных этапов:
+Варианты запуска:
 
 ```bash
-# Только обнаружение хостов
+# Справка
+python main.py --help
+
+# Только обнаружение списка хостов (быстро)
 python main.py --step discovery
 
-# Только глубокое сканирование (требует список хостов или настроенный config)
-python main.py --step deep
+# Только проверка подключений (требует результаты discovery или config)
+python main.py --step connection-check
+
+# Только фингерпринтинг (требует результаты discovery или config)
+python main.py --step fingerprint
 
 # Только генерация отчетов
 python main.py --step report
 
-# Принудитоельное
-python main.py --step report
-```
-
-
-## Конфигурация
-
-Настройки хранятся в файле `config.yaml`. Если файла нет, программа предложит создать его при первом запуске: отвечаем на вопросы. Для прекращения ввод списка просто нажимаем Enter.
-
-Пример структуры `config.yaml`:
-
-```yaml
-concurrency: 10
-targets:
-  - 192.168.1.0/24
-credentials:
-  - user: domain\username
-    type: winrm
-    passwords:
-      - password1
-      - password2
-  - user: root
-    type: ssh
-    passwords:
-      - password1
-      - "1234567890" # Числовые пароли обязательно обернуть в кавычки!
-    key_paths:
-      - /path/to/key1
-      - /path/to/key2
-exclusions: []
+# Принудительное сканирование одного хоста
+python main.py --host 10.0.0.1 --force --debug
 ```
