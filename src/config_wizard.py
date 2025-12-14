@@ -11,7 +11,7 @@ def get_input(prompt, default=None):
         return input(f"{prompt}: ").strip()
 
 def create_config():
-    print("=== NetConfGen Configuration Wizard ===")
+    print("=== net-conf-gen Configuration Wizard ===")
     print("Config file not found. Let's create one.")
 
     config = {}

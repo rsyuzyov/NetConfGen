@@ -23,7 +23,7 @@ def load_config(config_path):
         return yaml.safe_load(f)
 
 def main():
-    parser = argparse.ArgumentParser(description="NetConfGen - Network Scanner")
+    parser = argparse.ArgumentParser(description="net-conf-gen - Network Scanner")
     parser.add_argument('--config', default='config.yaml', help='Path to config file')
     parser.add_argument('--step', choices=['discovery', 'connection-check', 'fingerprint', 'report', 'all'], default='all', help='Step to run')
     parser.add_argument('--force', action='store_true', help='Force rescan of all hosts')
